@@ -62,7 +62,7 @@ func ReadFromKeyValue(r io.Reader) (map[string]string, error) {
 	return result, scanner.Err()
 }
 
-// LoadOauthCredentialsFromDotFile will return client_id, client_secret, refresh_token and additional_scopes values given the same key names, or blank/empty if not found.  additional_scopes values should be a comma seperated list of values.  This will use the cached values as if ReadFromDotFile is used.
+// LoadOauthCredentialsFromDotFile will return client_id, client_secret, refresh_token and additional_scopes values given the same key names, or blank/empty if not found.  additional_scopes values should be a comma separated list of values.  This will use the cached values as if ReadFromDotFile is used.
 func LoadOauthCredentialsFromDotFile() (string, string, string, []string, error) {
 	env, err := ReadFromDotFile()
 	if err != nil {

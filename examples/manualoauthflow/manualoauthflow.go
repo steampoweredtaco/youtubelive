@@ -1,39 +1,3 @@
-
-# Go YouTube Live
-### A simple youtube live client chat
-
-[![Go Report Card](https://goreportcard.com/badge/github.com/steampoweredtaco/youtubelive)](https://goreportcard.com/report/github.com/steampoweredtaco/youtubelive)
-[![Go Reference](https://pkg.go.dev/badge/github.com/steampoweredtaco/youtubelive.svg)](https://pkg.go.dev/github.com/steampoweredtaco/youtubelive)
-[![Discord](https://img.shields.io/discord/977648006063091742?label=Discord)](https://discord.gg/HwWDNGBmxY)
-
-`go get github.com/steampoweredtaco/youtubelive`
-
-<p style="text-align: center">
-    <a href="#key-features">Key Features</a> •
-    <a href="#in-progress-features">In Progress</a> •
-    <a href="#get-the-module">Get</a> •
-    <a href="#examples">Examples</a> •
-    <a href="#contact">Contact</a> •
-    <a href="#license">License</a> 
-</p>
-
-## Key Features
-* Simplified OAuth2 login.
-* Monitor when a youtube channel becomes live.
-* Channel based interface for getting live chat messages and events and sending commands to the live.
-
-## In progress Features
-* Override OAuth2 from browser based workflow to with custom Token provider workflow.
-
-## Usage
-### Get the module
-`go get github.com/steampoweredtaco/youtubelive`
-
-## Examples
-* [Monitor Live Status](examples%2FcheckLive%2Fchecklive.go)
-* [Stream chat from a live stream and post a message to chat](examples%2FcheckLive%2Fchecklive.go)
-### Basic Example
-```go
 package main
 
 import (
@@ -68,11 +32,31 @@ func main() {
 			panic(err)
 		}
 	}
-	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken(refreshToken), yt.AutoAuthenticate())
+
+	// Manual Oauth2 flow is the behavior because yt.AutoAuthenticate option is unused
+	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken("badtoken") /* , yt.AutoAuthenticate() */)
 	if err != nil {
 		panic(err)
 	}
+
+	// Showing that an error is produced if a function is used without the login workflow first
 	broadcastID, err := ytLive.CurrentBroadcastIDFromChannelHandle(channel)
+	if errors.Is(err, yt.NotLoggedIn) {
+		fmt.Println("YouTube not logged in:", err)
+	} else if err != nil {
+		panic(err)
+	}
+
+	refreshToken, err = yourOauthWorkflow()
+	if err != nil {
+		panic(err)
+	}
+	ytLive.SetRefreshToken(refreshToken)
+	// alternatively you can use yt.Login() to use the builtin oauth2 workflow that will spawn
+	// a browser to complete the 3 legged Oauth2 workflow.
+	//
+	// err = ytLive.Login()
+	broadcastID, err = ytLive.CurrentBroadcastIDFromChannelHandle(channel)
 	if err != nil {
 		panic(err)
 	}
@@ -116,11 +100,9 @@ func main() {
 		}
 	}
 }
-```
-## Contact
-Currently available on [Discord](https://discord.gg/HwWDNGBmxY)
 
-## License
-
-MIT
-
+// yourOauthWorkflow is whatever your config management system needs to do to get a token for the user.
+func yourOauthWorkflow() (string, error) {
+	// for the example to work make sure refreshToken is correctly set in const or set in the .env file as refresh_token.
+	return refreshToken, nil
+}

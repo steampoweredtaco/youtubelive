@@ -10,4 +10,6 @@ var (
 
 	ErrBroadcastNotFound = errors.New("broadcast not found")
 	ErrChatDisabled      = errors.New("live chat disabled")
+
+	NotLoggedIn = errors.New("user not logged in")
 )

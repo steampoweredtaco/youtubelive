@@ -32,7 +32,7 @@ func main() {
 			panic(err)
 		}
 	}
-	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken(refreshToken))
+	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken(refreshToken), yt.AutoAuthenticate())
 	if err != nil {
 		panic(err)
 	}

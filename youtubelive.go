@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
 	"log/slog"
 	"net/http"
@@ -30,6 +32,7 @@ type YouTubeLive struct {
 
 	listenAddr       string
 	additionalScopes []string
+	autoAuth         bool
 }
 
 func NewYouTubeLive(clientID, clientSecret string, options ...Option) (*YouTubeLive, error) {
@@ -52,20 +55,7 @@ func NewYouTubeLive(clientID, clientSecret string, options ...Option) (*YouTubeL
 		yt.log.Error("error while processing options", "error", errs)
 		return nil, errs
 	}
-	yt.yclient = &ytClient{
-		ctx:          yt.ctx,
-		transport:    yt.transport,
-		jar:          yt.jar,
-		log:          yt.log,
-		clientID:     yt.clientID,
-		clientSecret: yt.clientSecret,
-		listenR:      listenResolve{listenAddr: yt.listenAddr},
-		// ordering matters due to a workaround for a rare use case, perhaps add an
-		// OverrideScopes() option in the future for this use case instead.
-		scopes:       append(append(yt.additionalScopes[:0:0], yt.additionalScopes...), requiredScopes...),
-		refreshToken: yt.refreshToken,
-		service:      nil,
-	}
+	yt.newYtClient()
 	return yt, nil
 }
 
@@ -89,8 +79,13 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelID(channelID string) (string
 	channelsResp, err := yt.yclient.service.Channels.List([]string{"contentDetails"}).
 		Id(channelID).
 		Do()
-	if err != nil || len(channelsResp.Items) == 0 {
+	err = wrapOauthErrors(err)
+	if err != nil {
 		return "", fmt.Errorf("failed to get channel details: %v", err)
+	}
+
+	if len(channelsResp.Items) == 0 {
+		return "", errors.New("channel not found")
 	}
 
 	uploadsPlaylist := channelsResp.Items[0].ContentDetails.RelatedPlaylists.Uploads
@@ -99,6 +94,7 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelID(channelID string) (string
 		PlaylistId(uploadsPlaylist).
 		MaxResults(50). // Check last 5 videos
 		Do()
+	err = wrapOauthErrors(err)
 	if err != nil {
 		return "", fmt.Errorf("failed to get uploads: %v", err)
 	}
@@ -109,6 +105,7 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelID(channelID string) (string
 		videoResp, err := yt.yclient.service.Videos.List([]string{"liveStreamingDetails"}).
 			Id(videoID).
 			Do()
+		err = wrapOauthErrors(err)
 		if err != nil || len(videoResp.Items) == 0 {
 			continue
 		}
@@ -128,7 +125,7 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelID(channelID string) (string
 		Q(channelID).
 		Type("video").
 		Do()
-
+	err = wrapOauthErrors(err)
 	if err != nil {
 		return "", fmt.Errorf("failed to get search results: %v", err)
 	}
@@ -144,6 +141,7 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelIDB(channelID string) (strin
 		return "", err
 	}
 	resp, err := yt.yclient.service.Search.List([]string{"id"}).ChannelId(channelID).EventType("live").Type("video").Do()
+	err = wrapOauthErrors(err)
 	if err != nil {
 		return "", err
 	}
@@ -165,7 +163,7 @@ func (yt *YouTubeLive) ChannelIDFromChannelHandle(channelName string) (string, e
 		return "", err
 	}
 	resp, err := yt.yclient.service.Channels.List([]string{"id"}).ForHandle(channelName).Do()
-	if err != nil {
+	if err := wrapOauthErrors(err); err != nil {
 		return "", err
 	}
 	if len(resp.Items) == 0 {
@@ -180,7 +178,7 @@ func (yt *YouTubeLive) IsLive(channelID string) (bool, error) {
 		if errors.Is(err, NotLiveError) {
 			return false, nil
 		}
-		return false, err
+		return false, wrapOauthErrors(err)
 	}
 	return true, nil
 }
@@ -231,6 +229,7 @@ func (yt *YouTubeLive) getLiveChatID(broadcastID string) (string, error) {
 		MaxResults(1)
 
 	resp, err := call.Do()
+	err = wrapOauthErrors(err)
 	if err != nil {
 		return "", fmt.Errorf("failed to get broadcast: %w", err)
 	}
@@ -267,6 +266,8 @@ func (yt *YouTubeLive) pollLiveChat(ctx context.Context, liveChatID string, out 
 			resp, err := yt.yclient.service.LiveChatMessages.List(liveChatID, []string{"snippet", "authorDetails"}).
 				PageToken(nextPageToken).
 				Do()
+			err = wrapOauthErrors(err)
+
 			if err != nil {
 				yt.log.Debug("live chat poll failed", "error", err)
 				gerr := &googleapi.Error{}
@@ -486,11 +487,76 @@ func (yt *YouTubeLive) sendChatMessage(liveChatID, message string) error {
 	}
 
 	_, err := yt.yclient.service.LiveChatMessages.Insert([]string{"snippet"}, msg).Do()
+	err = wrapOauthErrors(err)
 	return err
 }
 
+// SetRefreshToken can be called to update the refresh token.  This must only be called with no attached instances.
+func (yt *YouTubeLive) SetRefreshToken(token string) {
+	// TODO: Make it so that it doesn't matter if there are attached instances
+	yt.newYtClient()
+	yt.refreshToken = token
+	yt.yclient.refreshToken = token
+}
+
+// Login will use the Oauth2 workflow, if required, to login. If refresh token isn't expired this will not do anything.
+// with default configuration this will run a browser to complete the login process.
+func (yt *YouTubeLive) Login() error {
+	_, err := yt.yclient.Token()
+	if err != nil {
+		return yt.ForceLogin()
+	}
+	return nil
+}
+
+func (yt *YouTubeLive) ForceLogin() error {
+	yt.SetRefreshToken("")
+	// TODO: use custom workflow options when available.
+	// TODO: Make it so that it doesn't matter if there are attached instances
+	err := yt.yclient.refresh()
+	if err != nil {
+		return err
+	}
+	yt.yclient.tokenSource = yt.yclient.createTokenSource("", true)
+	_, err = yt.yclient.tokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("login failed: %w", err)
+	}
+
+	c := oauth2.NewClient(yt.ctx, yt.yclient.tokenSource)
+	service, err := youtube.NewService(yt.ctx, option.WithHTTPClient(c))
+	if err != nil {
+		return err
+	}
+	yt.yclient.service = service
+	return nil
+}
+
 func (yt *YouTubeLive) deleteChatMessage(messageID string) error {
-	return yt.yclient.service.LiveChatMessages.Delete(messageID).Do()
+	return wrapOauthErrors(yt.yclient.service.LiveChatMessages.Delete(messageID).Do())
+}
+
+func (yt *YouTubeLive) newYtClient() {
+	lResolver := listenResolve{listenAddr: yt.listenAddr}
+	if yt.yclient != nil {
+		// So we don't open the port an extra time
+		lResolver = yt.yclient.listenR
+	}
+	yt.yclient = &ytClient{
+		ctx:          yt.ctx,
+		transport:    yt.transport,
+		jar:          yt.jar,
+		log:          yt.log,
+		clientID:     yt.clientID,
+		clientSecret: yt.clientSecret,
+		listenR:      lResolver,
+		// ordering matters due to a workaround for a rare use case, perhaps add an
+		// OverrideScopes() option in the future for this use case instead.
+		scopes:       append(append(yt.additionalScopes[:0:0], yt.additionalScopes...), requiredScopes...),
+		refreshToken: yt.refreshToken,
+		autoAuth:     yt.autoAuth,
+		service:      nil,
+	}
 }
 
 func toAuthorDetails(authorDetails *youtube.LiveChatMessageAuthorDetails) AuthorDetails {

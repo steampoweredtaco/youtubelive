@@ -120,6 +120,9 @@ func selectBestIP(public, private, loopback []net.IP) net.IP {
 }
 
 func (yt *listenResolve) setupListener() error {
+	if yt.stickyPort != nil {
+		return nil
+	}
 	listener, err := reuseport.Listen("tcp", yt.listenAddr)
 	if err != nil {
 		return err

@@ -35,6 +35,7 @@ type ytClient struct {
 	scopes       []string
 
 	refreshToken string
+	autoAuth     bool
 
 	listenR     listenResolve
 	service     *youtube.Service
@@ -67,10 +68,10 @@ func (yt *ytClient) refresh() error {
 		return nil
 	}
 	err := yt.listenR.setupListener()
+	yt.redirectURI = "http://" + yt.listenR.effectiveAddr + "/callback"
 	if err != nil {
 		return err
 	}
-	yt.redirectURI = "http://" + yt.listenR.effectiveAddr + "/callback"
 	err = yt.validate()
 	if err != nil {
 		return err
@@ -78,44 +79,7 @@ func (yt *ytClient) refresh() error {
 
 	yt.ctx = context.WithValue(yt.ctx, oauth2.HTTPClient, &http.Client{Transport: yt.transport, Jar: yt.jar})
 
-	handler, challenge, verifier, err := yt.createAuthPKCEAuth(yt.listenR)
-	if err != nil {
-		return err
-	}
-	conf := &oauth2.Config{
-		ClientID:     yt.clientID,
-		ClientSecret: yt.clientSecret,
-		Endpoint:     google.Endpoint,
-		RedirectURL:  yt.redirectURI,
-		Scopes:       yt.scopes,
-	}
-	var token *oauth2.Token
-
-	token = &oauth2.Token{
-		TokenType:    "bearer",
-		RefreshToken: yt.refreshToken,
-	}
-
-	tokenSource := RefreshTokenSourceWithPKCE(yt.ctx,
-		conf,
-		token,
-		"",
-		handler,
-		&authhandler.PKCEParams{
-			Challenge:       challenge,
-			ChallengeMethod: "S256",
-			Verifier:        verifier,
-		},
-		oauth2.SetAuthURLParam("service", "lso"),
-		oauth2.SetAuthURLParam("o2v", "2"),
-		oauth2.SetAuthURLParam("ddm", "1"),
-		oauth2.SetAuthURLParam("flowName", "GeneralOAuthFlow"),
-		oauth2.SetAuthURLParam("force_verify", "true"),
-		oauth2.AccessTypeOffline,
-		oauth2.ApprovalForce,
-	)
-
-	yt.tokenSource = tokenSource
+	yt.tokenSource = yt.createTokenSource(yt.refreshToken, false)
 	c := oauth2.NewClient(yt.ctx, yt.tokenSource)
 	yt.service, err = youtube.NewService(yt.ctx, option.WithHTTPClient(c))
 	if err != nil {
@@ -125,11 +89,8 @@ func (yt *ytClient) refresh() error {
 	return nil
 }
 
-func (yt *ytClient) createAuthPKCEAuth(endpoint listenResolve) (authhandler.AuthorizationHandler, string, string, error) {
-	verifier, challenge, err := generatePKCE()
-	if err != nil {
-		return nil, "", "", err
-	}
+func (yt *ytClient) createAuthPKCEAuth(endpoint listenResolve) (authhandler.AuthorizationHandler, string, string) {
+	verifier, challenge := generatePKCE()
 
 	return func(authCodeURL string) (code string, state string, err error) {
 		var authErr error
@@ -197,19 +158,19 @@ func (yt *ytClient) createAuthPKCEAuth(endpoint listenResolve) (authhandler.Auth
 		cancel()
 		wg.Wait()
 		return code, state, authErr
-	}, challenge, verifier, nil
+	}, challenge, verifier
 }
 
-func generatePKCE() (verifier, challenge string, err error) {
+func generatePKCE() (verifier, challenge string) {
 	b := make([]byte, 32)
-	_, err = rand.Read(b)
-	if err != nil {
-		return "", "", fmt.Errorf("Failed to generate PKCE code verifier: %v", err)
-	}
+	// Maybe bad form, but there are other major issues going on if reading from the byte
+	// fails, and it is silly to pollute the stack with this one specific error case when the
+	// world must already be on fire
+	_, _ = rand.Read(b)
 	verifier = base64.RawURLEncoding.EncodeToString(b)
 	hash := sha256.Sum256([]byte(verifier))
 	challenge = base64.RawURLEncoding.EncodeToString(hash[:])
-	return verifier, challenge, nil
+	return verifier, challenge
 }
 
 func (yt *ytClient) validate() error {
@@ -233,4 +194,42 @@ func (yt *ytClient) Token() (*oauth2.Token, error) {
 	}
 	return yt.tokenSource.Token()
 
+}
+
+func (yt *ytClient) createTokenSource(refreshToken string, useDefault bool) oauth2.TokenSource {
+	conf := &oauth2.Config{
+		ClientID:     yt.clientID,
+		ClientSecret: yt.clientSecret,
+		Endpoint:     google.Endpoint,
+		RedirectURL:  yt.redirectURI,
+		Scopes:       yt.scopes,
+	}
+
+	token := &oauth2.Token{
+		TokenType:    "bearer",
+		RefreshToken: refreshToken,
+	}
+
+	if yt.autoAuth || useDefault {
+		handler, challenge, verifier := yt.createAuthPKCEAuth(yt.listenR)
+		return RefreshTokenSourceWithPKCE(yt.ctx,
+			conf,
+			token,
+			"",
+			handler,
+			&authhandler.PKCEParams{
+				Challenge:       challenge,
+				ChallengeMethod: "S256",
+				Verifier:        verifier,
+			},
+			oauth2.SetAuthURLParam("service", "lso"),
+			oauth2.SetAuthURLParam("o2v", "2"),
+			oauth2.SetAuthURLParam("ddm", "1"),
+			oauth2.SetAuthURLParam("flowName", "GeneralOAuthFlow"),
+			oauth2.SetAuthURLParam("force_verify", "true"),
+			oauth2.AccessTypeOffline,
+			oauth2.ApprovalForce,
+		)
+	}
+	return conf.TokenSource(yt.ctx, token)
 }

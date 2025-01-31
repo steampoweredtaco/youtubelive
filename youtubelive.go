@@ -30,9 +30,10 @@ type YouTubeLive struct {
 	clientSecret string
 	refreshToken string
 
-	listenAddr       string
-	additionalScopes []string
-	autoAuth         bool
+	listenAddr        string
+	additionalScopes  []string
+	autoAuth          bool
+	onNewRefreshToken func(string)
 }
 
 func NewYouTubeLive(clientID, clientSecret string, options ...Option) (*YouTubeLive, error) {
@@ -529,6 +530,10 @@ func (yt *YouTubeLive) ForceLogin() error {
 		return err
 	}
 	yt.yclient.service = service
+
+	if yt.onNewRefreshToken != nil {
+		yt.onNewRefreshToken(yt.refreshToken)
+	}
 	return nil
 }
 
@@ -552,10 +557,11 @@ func (yt *YouTubeLive) newYtClient() {
 		listenR:      lResolver,
 		// ordering matters due to a workaround for a rare use case, perhaps add an
 		// OverrideScopes() option in the future for this use case instead.
-		scopes:       append(append(yt.additionalScopes[:0:0], yt.additionalScopes...), requiredScopes...),
-		refreshToken: yt.refreshToken,
-		autoAuth:     yt.autoAuth,
-		service:      nil,
+		scopes:            append(append(yt.additionalScopes[:0:0], yt.additionalScopes...), requiredScopes...),
+		refreshToken:      yt.refreshToken,
+		onNewRefreshToken: yt.onNewRefreshToken,
+		autoAuth:          yt.autoAuth,
+		service:           nil,
 	}
 }
 

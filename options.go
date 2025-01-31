@@ -45,11 +45,23 @@ func AdditionalScopes(scopes ...string) Option {
 	}
 }
 
-// AutoAuthenticate will automatically call the OAuth2 workflow when the refresh token is no longer valid and there is no valid token.
-// Otherwise, NotLoggedIn error will be returned by methods that requires a valid token. Using RefreshToken option, or the Login, ForceLogin, or SetRefreshToken method must be called prior to resolve the NotLoggedIn error when AutoAuthenticate is not used.
+// AutoAuthenticate will automatically call the OAuth2 workflow when the refresh token is
+// no longer valid and there is no valid token. Otherwise, NotLoggedIn error will be
+// returned by methods that requires a valid token. Using RefreshToken option, or the
+// Login, ForceLogin, or SetRefreshToken method must be called prior to resolve the
+// NotLoggedIn error when AutoAuthenticate is not used.
 func AutoAuthenticate() Option {
 	return func(yt *YouTubeLive) error {
 		yt.autoAuth = true
+		return nil
+	}
+}
+
+// OnNewRefreshToken option will invoke the passed in function if a new refresh tokens is
+// obtained via login or updated via the token source.
+func OnNewRefreshToken(onNewRefreshToken func(refreshToken string)) Option {
+	return func(yt *YouTubeLive) error {
+		yt.onNewRefreshToken = onNewRefreshToken
 		return nil
 	}
 }

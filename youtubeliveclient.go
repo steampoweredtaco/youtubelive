@@ -34,8 +34,9 @@ type ytClient struct {
 	redirectURI  string
 	scopes       []string
 
-	refreshToken string
-	autoAuth     bool
+	refreshToken      string
+	onNewRefreshToken func(string)
+	autoAuth          bool
 
 	listenR     listenResolve
 	service     *youtube.Service
@@ -65,6 +66,18 @@ func newYTClient(ctx context.Context, log *slog.Logger, transport http.RoundTrip
 }
 func (yt *ytClient) refresh() error {
 	if yt.service != nil {
+
+		if yt.onNewRefreshToken == nil {
+			return nil
+		}
+		token, err := yt.tokenSource.Token()
+		if err != nil {
+			return err
+		}
+		if yt.refreshToken != token.RefreshToken {
+			yt.refreshToken = token.RefreshToken
+			yt.onNewRefreshToken(token.RefreshToken)
+		}
 		return nil
 	}
 	err := yt.listenR.setupListener()

@@ -34,7 +34,9 @@ func main() {
 	}
 
 	// Manual Oauth2 flow is the behavior because yt.AutoAuthenticate option is unused
-	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken("badtoken") /* , yt.AutoAuthenticate() */)
+	ytLive, err := yt.NewYouTubeLive(clientID, clientSecret, yt.RefreshToken("badtoken"), yt.OnNewRefreshToken(func(refreshToken string) {
+		fmt.Println("Refresh Token:", refreshToken)
+	}) /* , yt.AutoAuthenticate() */)
 	if err != nil {
 		panic(err)
 	}
@@ -53,7 +55,7 @@ func main() {
 	}
 	ytLive.SetRefreshToken(refreshToken)
 	// alternatively you can use yt.Login() to use the builtin oauth2 workflow that will spawn
-	// a browser to complete the 3 legged Oauth2 workflow.
+	// a browser to complete the 3 legged Oauth2 workflow.  This workflow would invoke the OnNewRefreshToken option used.
 	//
 	// err = ytLive.Login()
 	broadcastID, err = ytLive.CurrentBroadcastIDFromChannelHandle(channel)

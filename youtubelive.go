@@ -136,20 +136,23 @@ func (yt *YouTubeLive) CurrentBroadcastIDFromChannelID(channelID string) (string
 	return qResp.Items[0].Id.VideoId, nil
 }
 
-func (yt *YouTubeLive) CurrentBroadcastIDFromChannelIDB(channelID string) (string, error) {
+// LoggedInChannel return the name and channel ID of the logged-in user auth channel. Can
+// return an error, such as NotLoggedIn
+func (yt *YouTubeLive) LoggedInChannel() (string, string, error) {
 	err := yt.yclient.refresh()
 	if err != nil {
-		return "", err
+		return "", "", wrapOauthErrors(err)
 	}
-	resp, err := yt.yclient.service.Search.List([]string{"id"}).ChannelId(channelID).EventType("live").Type("video").Do()
+	// TODO handle multiple channelIDs
+	resp, err := yt.yclient.service.Channels.List([]string{"snippet", "id"}).Mine(true).Do()
 	err = wrapOauthErrors(err)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(resp.Items) == 0 {
-		return "", NotLiveError
+		return "", "", NoChannelsForUser
 	}
-	return resp.Items[0].Id.VideoId, nil
+	return resp.Items[0].Snippet.Title, resp.Items[0].Id, nil
 }
 
 func (yt *YouTubeLive) ChannelIDFromChannelHandle(channelName string) (string, error) {

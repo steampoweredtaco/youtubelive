@@ -23,3 +23,17 @@ func TestYouTubeLive_IsLive(t *testing.T) {
 	assert.True(t, live)
 
 }
+
+func TestYouTubeLive_LoggedInChannel(t *testing.T) {
+
+	clientId, clientSecret, token, additionalScopes, err := LoadOauthCredentialsFromDotFile()
+	assert.Nil(t, err)
+	yt, err := NewYouTubeLive(clientId, clientSecret, RefreshToken(token), AutoAuthenticate(), AdditionalScopes(additionalScopes...))
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	channelTitle, channelID, err := yt.LoggedInChannel()
+	assert.NoError(t, err)
+	t.Log(channelTitle, channelID)
+}
